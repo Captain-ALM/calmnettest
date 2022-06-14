@@ -1,6 +1,8 @@
 package com.captainalm.test.calmnet;
 
 import com.captainalm.lib.calmnet.packet.*;
+import com.captainalm.lib.calmnet.packet.factory.CALMNETPacketFactory;
+import com.captainalm.lib.calmnet.packet.factory.IPacketFactory;
 
 import java.nio.file.Path;
 

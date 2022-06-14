@@ -1,12 +1,9 @@
 package com.captainalm.test.calmnet;
 
-import com.captainalm.lib.calmnet.SSLUtilities;
-import com.captainalm.lib.calmnet.SSLUtilityException;
+import com.captainalm.lib.calmnet.ssl.*;
 import com.captainalm.lib.calmnet.packet.*;
 import com.captainalm.lib.calmnet.packet.core.NetworkSSLUpgradePacket;
-import com.captainalm.lib.calmnet.packet.fragment.FragmentAllocationPacket;
-import com.captainalm.lib.calmnet.packet.fragment.FragmentPIDPacket;
-import com.captainalm.lib.calmnet.packet.fragment.FragmentSendStopPacket;
+import com.captainalm.lib.calmnet.packet.fragment.*;
 import com.captainalm.lib.calmnet.stream.NetworkInputStream;
 import com.captainalm.lib.calmnet.stream.NetworkOutputStream;
 
@@ -89,9 +86,15 @@ public final class NetworkRuntime {
 
     private void init(boolean useFragmentation, boolean verifyFragmentPayloads) {
         fragmentReceiver = (useFragmentation) ? new FragmentReceiver(factory.getPacketLoader(), factory) : null;
-        if (fragmentReceiver != null) fragmentReceiver.setResponseVerification(verifyFragmentPayloads);
+        if (fragmentReceiver != null) {
+            fragmentReceiver.setResponseVerification(verifyFragmentPayloads);
+            fragmentReceiver.setSentDataWillBeAllVerified(verifyFragmentPayloads);
+        }
         fragmentSender = (useFragmentation) ? new FragmentSender(factory.getPacketLoader()) : null;
-        if (fragmentSender != null) fragmentSender.setResponseVerification(verifyFragmentPayloads);
+        if (fragmentSender != null) {
+            fragmentSender.setResponseVerification(verifyFragmentPayloads);
+            fragmentSender.setSentDataWillBeAllVerified(verifyFragmentPayloads);
+        }
         receiveThread.start();
         if (useFragmentation) {
             fragmentMonitorThread.start();

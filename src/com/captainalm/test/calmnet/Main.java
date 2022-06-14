@@ -1,7 +1,6 @@
 package com.captainalm.test.calmnet;
 
-import com.captainalm.lib.calmnet.SSLUtilities;
-import com.captainalm.lib.calmnet.SSLUtilityException;
+import com.captainalm.lib.calmnet.ssl.*;
 import com.captainalm.lib.calmnet.packet.IPacket;
 import com.captainalm.lib.calmnet.packet.PacketException;
 import com.captainalm.lib.calmnet.packet.core.NetworkSSLUpgradePacket;
