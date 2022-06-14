@@ -1,0 +1,10 @@
+<component name="ArtifactManager">
+  <artifact type="jar" build-on-make="true" name="calmnettest:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/calmnettest_jar</output-path>
+    <root id="archive" name="calmnettest.jar">
+      <element id="module-output" name="calmnettest" />
+      <element id="library" level="application" name="calmnetlib" />
+      <element id="library" level="application" name="calmstdcrypt" />
+    </root>
+  </artifact>
+</component>
