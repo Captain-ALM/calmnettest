@@ -147,7 +147,6 @@ public final class Main {
         server = null;
         client = null;
         sslUpgraded = false;
-        boolean connectFromServer = false;
         switch (opt) {
             case '0':
                 sendLoopsRemainingSetting = 1;
@@ -185,8 +184,7 @@ public final class Main {
                 requestSendSettings();
                 try {
                     DatagramSocket socket = new DatagramSocket();
-                    server = new NetMarshalServer(socket, factory, factory.getPacketLoader(), fragOpts);
-                    connectFromServer = true;
+                    client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -207,8 +205,7 @@ public final class Main {
                 requestSendSettings();
                 try {
                     DatagramSocket socket = new DatagramSocket(port, address);
-                    server = new NetMarshalServer(socket, factory, factory.getPacketLoader(), fragOpts);
-                    connectFromServer = true;
+                    client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -262,13 +259,6 @@ public final class Main {
                 server.setOpenedConsumer(Main::connectH);
                 server.setClosedConsumer(Main::closeH);
                 server.open();
-                if (connectFromServer) {
-                    try {
-                        server.connect(address, port, 0);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
             }
             if (client != null) {
                 client.setReceiveExceptionBiConsumer(Main::errH);
