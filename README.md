@@ -1,6 +1,6 @@
 # Captain ALM Network Library Tester (Java)
 
-This is the tester for the [calmnetlib](https://code.mrmelon54.xyz/alfred/calmnetlib) java library.
+This is the tester for the [calmnetlib](https://code.mrmelon54.com/alfred/calmnetlib) java library.
 
 There is a keystore file with the password keystore containing a self-signed localhost certificate for testing.
 

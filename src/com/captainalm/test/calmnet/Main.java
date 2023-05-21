@@ -1,5 +1,9 @@
 package com.captainalm.test.calmnet;
 
+import com.captainalm.lib.calmnet.marshal.FragmentationOptions;
+import com.captainalm.lib.calmnet.marshal.NetMarshalClient;
+import com.captainalm.lib.calmnet.marshal.NetMarshalServer;
+import com.captainalm.lib.calmnet.packet.PacketLoader;
 import com.captainalm.lib.calmnet.ssl.*;
 import com.captainalm.lib.calmnet.packet.IPacket;
 import com.captainalm.lib.calmnet.packet.PacketException;
@@ -12,22 +16,26 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.LinkedList;
-import java.util.Queue;
+import java.util.*;
 
 public final class Main {
-    private static NetworkRuntime runtime;
-    private static Thread recvThread;
-    private static boolean akned = false;
+    public static final MyPacketFactory factory = new MyPacketFactory(new PacketLoader());
+    private static NetMarshalServer server;
+    private static NetMarshalClient client;
+    private static final Map<NetMarshalClient, Thread> recvThreads = Collections.synchronizedMap(new HashMap<>());
+
     private final static Queue<DataPacket> packetQueue = new LinkedList<>();
 
     private static SSLContext sslContext;
     private static boolean isClient;
     private static String sslHost;
+    private static boolean sslUpgraded;
 
+    private static final Object slockAckned = new Object();
+    private static boolean ackn;
     private static int sendLoopsRemainingSetting;
-
     private static int sendLoopWaitTime;
+
     private static final Object slock = new Object();
 
     public static void main(String[] args) {
@@ -86,7 +94,8 @@ public final class Main {
     }
 
     private static void start() {
-        if (runtime != null && runtime.isProcessing()) return;
+        if (server != null && server.isRunning()) return;
+        if (client != null && client.isRunning()) return;
         Console.writeLine("Socket Setup:");
         Console.writeLine("IP Address:");
         InetAddress address = null;
@@ -113,6 +122,14 @@ public final class Main {
             
             fverifyp = (fopt == 'Y' || fopt == 'y');
         }
+        FragmentationOptions fragOpts;
+        if (fragmentation) {
+            fragOpts = new FragmentationOptions();
+            fragOpts.verifyFragments = fverifyp;
+            fragOpts.equalityVerifyFragments = fverifyp;
+        } else {
+            fragOpts = null;
+        }
         Console.writeLine("Select Socket Mode:");
         Console.writeLine("0) TCP Listen");
         Console.writeLine("1) TCP Client");
@@ -127,14 +144,17 @@ public final class Main {
         char opt = Console.readCharacter();
         
         Console.writeLine("Starting Socket...");
-        runtime = null;
+        server = null;
+        client = null;
+        sslUpgraded = false;
+        boolean connectFromServer = false;
         switch (opt) {
             case '0':
                 sendLoopsRemainingSetting = 1;
                 sendLoopWaitTime = 50;
-                try (ServerSocket serverSocket = new ServerSocket(port, 1, address)) {
-                    Socket socket = serverSocket.accept();
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp);
+                try {
+                    ServerSocket serverSocket = new ServerSocket(port, 1, address);
+                    server = new NetMarshalServer(serverSocket, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -145,7 +165,7 @@ public final class Main {
                 sendLoopWaitTime = 50;
                 try {
                     Socket socket = new Socket(address, port);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp);
+                    client = new NetMarshalClient(socket, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -155,7 +175,7 @@ public final class Main {
                 requestSendSettings();
                 try {
                     DatagramSocket socket = new DatagramSocket(port, address);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp, null, -1);
+                    server = new NetMarshalServer(socket, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
                 } catch (SocketException e) {
                     e.printStackTrace();
@@ -165,9 +185,10 @@ public final class Main {
                 requestSendSettings();
                 try {
                     DatagramSocket socket = new DatagramSocket();
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp, address, port);
+                    server = new NetMarshalServer(socket, factory, factory.getPacketLoader(), fragOpts);
+                    connectFromServer = true;
                     isClient = true;
-                } catch (SocketException e) {
+                } catch (IOException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -176,8 +197,7 @@ public final class Main {
                 try {
                     MulticastSocket socket = new MulticastSocket(port);
                     if (!socket.getLoopbackMode()) socket.setLoopbackMode(true);
-                    socket.joinGroup(address);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp, address, port);
+                    client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -187,9 +207,10 @@ public final class Main {
                 requestSendSettings();
                 try {
                     DatagramSocket socket = new DatagramSocket(port, address);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp, address, port);
+                    server = new NetMarshalServer(socket, factory, factory.getPacketLoader(), fragOpts);
+                    connectFromServer = true;
                     isClient = true;
-                } catch (SocketException e) {
+                } catch (IOException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -198,8 +219,7 @@ public final class Main {
                 try {
                     MulticastSocket socket = new MulticastSocket(port);
                     if (socket.getLoopbackMode()) socket.setLoopbackMode(false);
-                    socket.joinGroup(address);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp, address, port);
+                    client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -209,11 +229,12 @@ public final class Main {
                 sendLoopsRemainingSetting = 1;
                 sendLoopWaitTime = 50;
                 if (sslContext == null) break;
-                try (SSLServerSocket serverSocket = SSLUtilities.getSSLServerSocket(sslContext, port, 1, address)) {
-                    Socket socket = serverSocket.accept();
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp);
+                try {
+                    SSLServerSocket serverSocket = SSLUtilities.getSSLServerSocket(sslContext, port, 1, address);
+                    server = new NetMarshalServer(serverSocket, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
-                } catch (IOException | SSLUtilityException e) {
+                    sslUpgraded = true;
+                } catch (SSLUtilityException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -223,25 +244,147 @@ public final class Main {
                 if (sslContext == null) break;
                 try {
                     Socket socket = SSLUtilities.getSSLClientSocket(sslContext, sslHost, port);
-                    runtime = new NetworkRuntime(socket, fragmentation, fverifyp);
+                    client = new NetMarshalClient(socket, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
+                    sslUpgraded = true;
                 } catch (SSLUtilityException e) {
                     e.printStackTrace();
                 }
                 break;
         }
-        if (runtime == null) {
+        if (client == null && server == null) {
             Console.writeLine("!FAILED TO START!");
         } else {
-            while (runtime.notReadyToSend()) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
+            if (server != null) {
+                server.setAcceptExceptionBiConsumer(Main::errH);
+                server.setReceiveExceptionBiConsumer(Main::errH);
+                server.setReceiveBiConsumer(Main::sslUpgUnit);
+                server.setOpenedConsumer(Main::connectH);
+                server.setClosedConsumer(Main::closeH);
+                server.open();
+                if (connectFromServer) {
+                    try {
+                        server.connect(address, port, 0);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
             }
-            createAndStartRecvThread();
+            if (client != null) {
+                client.setReceiveExceptionBiConsumer(Main::errH);
+                client.setReceiveBiConsumer(Main::sslUpgUnit);
+                client.setClosedConsumer(Main::closeH);
+                client.open();
+                connectH(client);
+            }
             Console.writeLine("Socket Started.");
         }
+    }
+
+    private static void connectH(NetMarshalClient client) {
+        Thread recvThread = new Thread(() -> {
+            PacketType nextType = null;
+            Path nextPath = null;
+            if (sslUpgraded) {
+                try {
+                    client.sendPacket(new NetworkSSLUpgradePacket(false), true);
+                } catch (IOException | PacketException e) {
+                    e.printStackTrace();
+                }
+            }
+            while (client.isRunning()) {
+                try {
+                    IPacket packet;
+                    while ((packet = client.receivePacket()) != null) {
+                        if (!packet.isValid()) continue;
+                        if (packet instanceof AKNPacket) {
+                            synchronized (slockAckned) {
+                                ackn = true;
+                                slockAckned.notifyAll();
+                            }
+                        }
+                        if (packet instanceof TypePacket && nextType == null) {
+                            nextType = ((TypePacket) packet).type;
+                            client.sendPacket(new AKNPacket(), false);
+                        }
+                        if (packet instanceof DataPacket && nextType == PacketType.Message) {
+                            nextType = null;
+                            synchronized (slock) {
+                                packetQueue.add((DataPacket) packet);
+                            }
+                            client.sendPacket(new AKNPacket(), false);
+                        }
+                        if (packet instanceof DataPacket && nextType == PacketType.Name) {
+                            nextType = null;
+                            try {
+                                nextPath = new File(new String(packet.savePayload(), StandardCharsets.UTF_8)).toPath();
+                            } catch (PacketException e) {
+                                e.printStackTrace();
+                            }
+                            client.sendPacket(new AKNPacket(), false);
+                        }
+                        if (packet instanceof StreamedDataPacket && nextType == PacketType.Data && nextPath != null) {
+                            nextType = null;
+                            try (FileOutputStream outputStream = new FileOutputStream(nextPath.toFile())) {
+                                ((StreamedDataPacket) packet).readData(outputStream);
+                                synchronized (slock) {
+                                    DataPacket p = new DataPacket(("Received File: " + nextPath.toAbsolutePath()).getBytes(StandardCharsets.UTF_8));
+                                    packetQueue.add(p);
+                                }
+                            } catch (IOException | PacketException e) {
+                                e.printStackTrace();
+                            } finally {
+                                nextPath = null;
+                            }
+                        }
+                    }
+                } catch (InterruptedException e) {
+                } catch (IOException | PacketException e) {
+                    e.printStackTrace();
+                }
+
+            }
+        }, "recv_thread_"+client.remoteAddress()+":"+client.remotePort());
+        recvThread.start();
+        recvThreads.put(client, recvThread);
+    }
+
+    private static void closeH(NetMarshalClient client) {
+        Thread waitOn = recvThreads.remove(client);
+        if (waitOn != null) {
+            try {
+                waitOn.join();
+            } catch (InterruptedException e) {
+            }
+        }
+    }
+
+    private static void sslUpgUnit(IPacket packet, NetMarshalClient client) {
+        try {
+            if (packet instanceof NetworkSSLUpgradePacket && sslContext != null) {
+                if (!((NetworkSSLUpgradePacket) packet).isAcknowledgement()) {
+                    client.sendPacket(new NetworkSSLUpgradePacket(true), true);
+                }
+                if (isClient) client.sslUpgradeClientSide(sslContext, sslHost);
+                else client.sslUpgradeServerSide(sslContext);
+                sslUpgraded = true;
+            }
+        } catch (PacketException | IOException | SSLUtilityException e) {
+            e.printStackTrace();
+            try {
+                client.close();
+            } catch (IOException ex) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static void errH(Exception ex, NetMarshalServer server) {
+        ex.printStackTrace();
+    }
+
+    private static void errH(Exception ex, NetMarshalClient client) {
+        ex.printStackTrace();
     }
 
     private static void requestSendSettings() {
@@ -257,104 +400,57 @@ public final class Main {
         sendLoopWaitTime = num;
     }
 
-    private static void createAndStartRecvThread() {
-        recvThread = new Thread(() -> {
-            PacketType nextType = null;
-            Path nextPath = null;
-            while (runtime != null && runtime.isProcessing()) {
-                IPacket packet;
-                while ((packet = runtime.receiveLastPacket()) != null) {
-                    if (!packet.isValid()) continue;
-                    if (packet instanceof TypePacket && nextType == null) {
-                        nextType = ((TypePacket) packet).type;
-                        runtime.sendPacket(new AKNPacket(), false);
-                    }
-                    if (packet instanceof DataPacket && nextType == PacketType.Message) {
-                        nextType = null;
-                        synchronized (slock) {
-                            packetQueue.add((DataPacket) packet);
-                        }
-                        runtime.sendPacket(new AKNPacket(), false);
-                    }
-                    if (packet instanceof DataPacket && nextType == PacketType.Name) {
-                        nextType = null;
-                        try {
-                            nextPath = new File(new String(packet.savePayload(), StandardCharsets.UTF_8)).toPath();
-                        } catch (PacketException e) {
-                            e.printStackTrace();
-                        }
-                        runtime.sendPacket(new AKNPacket(), false);
-                    }
-                    if (packet instanceof StreamedDataPacket && nextType == PacketType.Data && nextPath != null) {
-                        nextType = null;
-                        try (FileOutputStream outputStream = new FileOutputStream(nextPath.toFile())) {
-                            ((StreamedDataPacket) packet).readData(outputStream);
-                            synchronized (slock) {
-                                DataPacket p = new DataPacket(("Received File: " + nextPath.toAbsolutePath()).getBytes(StandardCharsets.UTF_8));
-                                packetQueue.add(p);
-                            }
-                        } catch (IOException | PacketException e) {
-                            e.printStackTrace();
-                        } finally {
-                            nextPath = null;
-                        }
-                    }
-                    if (packet instanceof NetworkSSLUpgradePacket && sslContext != null) {
-                        if (((NetworkSSLUpgradePacket) packet).isAcknowledgement()) {
-                            runtime.sslUpgrade(sslContext, sslHost, isClient);
-                        } else {
-                            runtime.sendPacket(new NetworkSSLUpgradePacket(true), true);
-                            runtime.sslUpgrade(sslContext, sslHost, isClient);
-                        }
-                    }
-                }
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                }
-            }
-        }, "main_recv_thread");
-        recvThread.start();
-    }
-
     private static void stop() {
-        if (runtime == null || !runtime.isProcessing()) return;
+        if ((server == null || !server.isRunning()) && (client == null || !client.isRunning())) return;
         Console.writeLine("Socket Stopping...");
-        runtime.stopProcessing();
-        try {
-            recvThread.join();
-        } catch (InterruptedException e) {
+        if (server != null) {
+            try {
+                server.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                server = null;
+            }
         }
-        runtime = null;
+        if (client != null) {
+            try {
+                client.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                client = null;
+            }
+        }
         isClient = false;
+        sslUpgraded = false;
         Console.writeLine("Socket Stopped.");
     }
 
-    private static boolean waitForAKN(IPacket packet) {
-        if (packet instanceof AKNPacket && packet.isValid()) {
-            akned = true;
-            return false;
-        }
-        return true;
-    }
-
     private static void doAKNWait(IPacket packet) {
-        akned = false;
-        runtime.setPacketReceiveCallback(Main::waitForAKN);
+        ackn = false;
         int i = 0;
-        while (!akned) {
-            runtime.sendPacket(packet, false);
+        while (++i <= sendLoopsRemainingSetting && !ackn) {
             try {
-                Thread.sleep(sendLoopWaitTime);
+                if (server != null) {
+                    server.broadcastPacket(packet, false);
+                }
+                if (client != null) {
+                    client.sendPacket(packet, false);
+                }
+            } catch (IOException | PacketException e) {
+                e.printStackTrace();
+            }
+            try {
+                synchronized (slockAckned) {
+                    slockAckned.wait(sendLoopWaitTime);
+                }
             } catch (InterruptedException e) {
             }
-            if (++i >= sendLoopsRemainingSetting) akned = true;
         }
-        runtime.setPacketReceiveCallback(null);
     }
 
     private static void message() {
-        if (runtime == null || !runtime.isProcessing()) return;
+        if ((server == null || !server.isRunning()) && (client == null || !client.isRunning())) return;
         Console.writeLine("Message To Send:");
         String message = Console.readString();
         doAKNWait(new TypePacket(PacketType.Message));
@@ -364,7 +460,7 @@ public final class Main {
     }
 
     private static void send() {
-        if (runtime == null || !runtime.isProcessing()) return;
+        if ((server == null || !server.isRunning()) && (client == null || !client.isRunning())) return;
         Console.writeLine("Path of File To Send:");
         File file = new File(Console.readString());
         if (file.exists()) {
@@ -398,44 +494,71 @@ public final class Main {
     }
 
     private static void sslSetup() {
-        if (runtime != null && runtime.isSSLUpgraded()) return;
+        if (sslUpgraded) return;
         Console.writeLine("SSL Setup:");
         Console.writeLine("SSL Host Name (Enter empty to set to null):");
         sslHost = Console.readString();
         if (sslHost.equals("")) sslHost = null;
         Console.writeLine("SSL Keystore Path:");
         String kpath = Console.readString();
-        Console.writeLine("SSL Keystore Password:");
-        String kpass = Console.readString();
-        if (kpass.equals("")) kpass = "changeit";
-        try {
-            sslContext = SSLUtilities.getSSLContext(null, SSLUtilities.loadKeyStore(null, new File(kpath), kpass), kpass.toCharArray());
-            Console.writeLine("SSL Setup Complete!");
-        } catch (SSLUtilityException e) {
-            e.printStackTrace();
-            Console.writeLine("SSL Setup Failed!");
+        if (!kpath.equals("")) {
+            Console.writeLine("SSL Keystore Password:");
+            String kpass = Console.readString();
+            if (kpass.equals("")) kpass = "changeit";
+            try {
+                sslContext = SSLUtilities.getSSLContext(null, SSLUtilities.loadKeyStore(null, new File(kpath), kpass), kpass.toCharArray());
+                Console.writeLine("SSL Setup Complete!");
+            } catch (SSLUtilityException e) {
+                e.printStackTrace();
+                Console.writeLine("SSL Setup Failed!");
+            }
+        } else {
+            sslContext = null;
+            Console.writeLine("SSL Setup Cleared!");
         }
     }
 
     private static void upgrade() {
-        if (runtime == null || !runtime.isProcessing() || sslContext == null) return;
-        Console.writeLine("Upgrading Connection to SSL...");
-        runtime.sendPacket(new NetworkSSLUpgradePacket(false), true);
+        if (sslContext == null) return;
+        if (server != null) {
+            Console.writeLine("Upgrading Connections to SSL...");
+            try {
+                server.broadcastPacket(new NetworkSSLUpgradePacket(false), true);
+            } catch (IOException | PacketException e) {
+                e.printStackTrace();
+            }
+        }
+        if (client != null) {
+            Console.writeLine("Upgrading Connection to SSL...");
+            try {
+                client.sendPacket(new NetworkSSLUpgradePacket(false), true);
+            } catch (IOException | PacketException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private static void info() {
         Console.writeLine("INFORMATION:");
-        Console.writeLine("Local Socket: " + ((runtime != null && runtime.isProcessing()) ? runtime.getLocalAddress() + ":" + runtime.getLocalPort() : ":"));
-        Console.writeLine("Remote Socket: " + ((runtime != null && runtime.isProcessing()) ? runtime.getTargetAddress() + ":" + runtime.getTargetPort() : ":"));
-        Console.writeLine("Is Active: " + ((runtime != null && runtime.isProcessing()) ? "Yes" : "No"));
-        Console.writeLine("Number Of Packets To Process: " + (((runtime == null) ? 0 : runtime.numberOfQueuedReceivedPackets()) + packetQueue.size()));
-        Console.writeLine("SSL Upgrade Status: " + ((runtime != null && runtime.isSSLUpgraded()) ? "Upgraded" : "Not Upgraded"));
+        if (server != null) {
+            Console.writeLine("Local Socket: " + ((server.isRunning()) ? server.localAddress() + ":" + server.localPort() : ":"));
+            Console.writeLine("Client Count: " + server.getConnectedClients().length);
+            Console.writeLine("Is Active: Yes");
+        }
+        if (client != null) {
+            Console.writeLine("Local Socket: " + ((client.isRunning()) ? client.localAddress() + ":" + client.localPort() : ":"));
+            Console.writeLine("Remote Socket: " + ((client.isRunning()) ? client.remoteAddress() + ":" + client.remotePort() : ":"));
+            Console.writeLine("Is Active: Yes");
+        }
+        if (client == null && server == null) Console.writeLine("Is Active: No");
+        Console.writeLine("Number Of Packets To Process: " + packetQueue.size());
+        Console.writeLine("SSL Upgrade Status: " + ((sslUpgraded) ? "Upgraded" : "Not Upgraded"));
         Console.writeLine("SSL Host Name: " + ((sslHost == null) ? "<null>" : sslHost));
         Console.writeLine("SSL Context Status: " + ((sslContext == null) ? "Unavailable" : "Available"));
     }
 
     private static void header() {
-        Console.writeLine("C-ALM Net Test (C) Captain ALM 2022");
+        Console.writeLine("C-ALM Net Test (C) Captain ALM 2023");
         Console.writeLine("Under The BSD 3-Clause License");
     }
 
