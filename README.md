@@ -6,4 +6,4 @@ There is a keystore file with the password keystore containing a self-signed loc
 
 This application targets Java 8.
 
-(C) Captain ALM 2022 - Under the BSD 3-Clause License
+(C) Captain ALM 2023 - Under the BSD 3-Clause License
