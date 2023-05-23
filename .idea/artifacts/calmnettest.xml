@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" build-on-make="true" name="calmnettest">
+    <output-path>$PROJECT_DIR$/out/artifacts/calmnettest</output-path>
+    <root id="archive" name="calmnettest.jar">
+      <element id="module-output" name="calmnettest" />
+    </root>
+  </artifact>
+</component>
