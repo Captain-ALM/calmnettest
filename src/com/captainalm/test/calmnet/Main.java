@@ -298,6 +298,7 @@ public final class Main {
                         if (!packet.isValid()) continue;
                         if (packet instanceof AKNPacket) {
                             synchronized (slockAckned) {
+                                //System.out.println(Thread.currentThread().getName() + " : AKN");
                                 ackn = true;
                                 slockAckned.notifyAll();
                             }
@@ -428,23 +429,25 @@ public final class Main {
     private static void doAKNWait(IPacket packet) {
         ackn = false;
         int i = 0;
-        while (++i <= sendLoopsRemainingSetting && !ackn) {
-            try {
-                if (server != null) {
-                    server.broadcastPacket(packet, false);
-                }
-                if (client != null) {
-                    client.sendPacket(packet, false);
-                }
-            } catch (IOException | PacketException e) {
-                e.printStackTrace();
-            }
-            try {
-                synchronized (slockAckned) {
+        try {
+            synchronized (slockAckned) {
+                while (++i <= sendLoopsRemainingSetting && !ackn) {
+                    try {
+                        if (server != null) {
+                            server.broadcastPacket(packet, false);
+                        }
+                        if (client != null) {
+                            client.sendPacket(packet, false);
+                        }
+                    } catch (IOException | PacketException e) {
+                        e.printStackTrace();
+                    }
+                    if (ackn) break;
+                    //System.out.println(Thread.currentThread().getName() + " : " + (i - 1));
                     slockAckned.wait(sendLoopWaitTime);
                 }
-            } catch (InterruptedException e) {
             }
+        } catch (InterruptedException e) {
         }
     }
 
