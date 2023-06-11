@@ -8,6 +8,7 @@ import com.captainalm.lib.calmnet.ssl.*;
 import com.captainalm.lib.calmnet.packet.IPacket;
 import com.captainalm.lib.calmnet.packet.PacketException;
 import com.captainalm.lib.calmnet.packet.core.NetworkSSLUpgradePacket;
+import com.captainalm.lib.stdcrypt.digest.DigestProvider;
 import com.captainalm.utils.Console;
 
 import javax.net.ssl.SSLContext;
@@ -111,6 +112,14 @@ public final class Main {
             port = 0;
             Console.writeLine("Ignored! ; Setting To: 0");
         }
+        Console.writeLine("Use hash trailer (Y/OTHER):");
+        char hopt = Console.readCharacter();
+
+        if ((hopt == 'Y' || hopt == 'y') && factory.getPacketLoader().getHashProvider() == null) {
+            factory.setPacketLoader(new PacketLoader(DigestProvider.getSHA256Instance(true)));
+        } else if (factory.getPacketLoader().getHashProvider() != null){
+            factory.setPacketLoader(new PacketLoader());
+        }
         Console.writeLine("Use Fragmentation (Y/OTHER):");
         char fopt = Console.readCharacter();
         
@@ -186,7 +195,7 @@ public final class Main {
                     DatagramSocket socket = new DatagramSocket();
                     client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
-                } catch (IOException e) {
+                } catch (IOException | NullPointerException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -197,7 +206,7 @@ public final class Main {
                     if (!socket.getLoopbackMode()) socket.setLoopbackMode(true);
                     client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
-                } catch (IOException e) {
+                } catch (IOException | NullPointerException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -207,7 +216,7 @@ public final class Main {
                     DatagramSocket socket = new DatagramSocket(port, address);
                     client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = true;
-                } catch (IOException e) {
+                } catch (IOException | NullPointerException e) {
                     e.printStackTrace();
                 }
                 break;
@@ -218,7 +227,7 @@ public final class Main {
                     if (socket.getLoopbackMode()) socket.setLoopbackMode(false);
                     client = new NetMarshalClient(socket, address, port, factory, factory.getPacketLoader(), fragOpts);
                     isClient = false;
-                } catch (IOException e) {
+                } catch (IOException | NullPointerException e) {
                     e.printStackTrace();
                 }
                 break;
