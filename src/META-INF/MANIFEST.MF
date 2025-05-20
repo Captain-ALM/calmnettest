@@ -1,5 +1,4 @@
 Manifest-Version: 1.0
 Main-Class: com.captainalm.test.calmnet.Main
-Class-Path: calmnetlib-0.1.0.jar calmnetlib-0.0.1.jar calmstdcrypt-0.0.1
- .jar calmnetlib.jar calmstdcrypt.jar
+Class-Path: calmnetlib-0.1.1.jar calmnetlib-0.1.0.jar calmnetlib-0.0.1.jar calmstdcrypt-0.0.1.jar calmnetlib.jar calmstdcrypt.jar
 
